@@ -40,7 +40,7 @@ class KaomojiDatabase:
             self.cursor.execute("ALTER TABLE kaomoji ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
             self.conn.commit()
             print("Successfully added 'created_at' column to table.")
-            # Заполнение created_at для существующих строк
+
             self.cursor.execute("UPDATE kaomoji SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
             self.conn.commit()
             print("Successfully updated 'created_at' for existing rows.")
@@ -77,8 +77,7 @@ class KaomojiDatabase:
             print(f"Added kaomoji: {kaomoji} with ID: {kaomoji_id}")
 
             if tags:
-                for tag in tags:
-                    self.add_tag(kaomoji_id, tag)
+                self.add_tags(kaomoji_id, tags)
 
             return True
         except sqlite3.IntegrityError:
@@ -88,25 +87,35 @@ class KaomojiDatabase:
             print(f"Error adding kaomoji: {e}")
             return False
 
-    def add_tag(self, kaomoji_id, tag_name):
+    def add_tags(self, kaomoji_id, tag_names):
         try:
-            self.cursor.execute("INSERT INTO tags (kaomoji_id, tag_name) VALUES (?, ?)", (kaomoji_id, tag_name))
-            self.conn.commit()
-            print(f"Added tag '{tag_name}' for kaomoji ID {kaomoji_id}")
+            for tag_name in tag_names:
+
+                self.cursor.execute("SELECT id FROM tags WHERE kaomoji_id = ? AND tag_name = ?", (kaomoji_id, tag_name))
+                existing_tag = self.cursor.fetchone()
+
+                if not existing_tag:
+                    self.cursor.execute("INSERT INTO tags (kaomoji_id, tag_name) VALUES (?, ?)", (kaomoji_id, tag_name))
+                    self.conn.commit()
+                    print(f"Added tag '{tag_name}' for kaomoji ID {kaomoji_id}")
+                else:
+                    print(f"Tag '{tag_name}' already exists for kaomoji ID {kaomoji_id}. Skipping.")
+
             return True
-        except sqlite3.IntegrityError:
-            print(f"Tag '{tag_name}' already exists for kaomoji ID {kaomoji_id}")  # Handle duplicate tags
-            return False
+
         except sqlite3.Error as e:
-            print(f"Error adding tag: {e}")
+            print(f"Error adding tags: {e}")
             return False
+
+    def add_tag(self, kaomoji_id, tag_name):
+        return self.add_tags(kaomoji_id, [tag_name])
 
     def remove_kaomoji(self, kaomoji):
         try:
             self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = (SELECT id FROM kaomoji WHERE expression = ?)",
                                 (kaomoji,))
             self.conn.commit()
-            # Удаляем каомодзи
+
             self.cursor.execute("DELETE FROM kaomoji WHERE expression = ?", (kaomoji,))
             if self.cursor.rowcount > 0:
                 self.conn.commit()
@@ -122,7 +131,7 @@ class KaomojiDatabase:
     def get_all_kaomoji(self, sort_by_date=True, search_tags=None):
         try:
             sql = """
-                SELECT k.expression
+                SELECT DISTINCT k.expression  -- Используем DISTINCT для устранения дубликатов
                 FROM kaomoji k
                 LEFT JOIN tags t ON k.id = t.kaomoji_id
             """
@@ -131,6 +140,8 @@ class KaomojiDatabase:
             if search_tags:
                 sql += " WHERE t.tag_name IN (" + ",".join(["?"] * len(search_tags)) + ")"
                 params.extend(search_tags)
+
+            sql += " GROUP BY k.expression"
 
             if sort_by_date:
                 sql += " ORDER BY k.created_at DESC"

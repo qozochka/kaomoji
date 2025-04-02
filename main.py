@@ -109,11 +109,10 @@ class KaomojiApp(QWidget):
             kaomoji_label = QLabel(kaomoji)
             layout.addWidget(kaomoji_label)
 
-            # Отображение тегов для каомодзи
-            tags = self.db.get_tags_for_kaomoji(kaomoji)
-            if tags:
-                tags_label = QLabel(f"[{', '.join(tags)}]")
-                layout.addWidget(tags_label)
+            # tags = self.db.get_tags_for_kaomoji(kaomoji)
+            # if tags:
+            #     tags_label = QLabel(f"[{', '.join(tags)}]")
+            #     layout.addWidget(tags_label)
 
             del_button = QPushButton()
             del_button.setStyleSheet("""
