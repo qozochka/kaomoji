@@ -171,3 +171,28 @@ class KaomojiDatabase:
         if self.conn:
             self.conn.close()
             print("Database connection closed.")
+
+    def edit_tags(self, kaomoji, new_tags):
+        try:
+            # Get kaomoji ID
+            self.cursor.execute("SELECT id FROM kaomoji WHERE expression = ?", (kaomoji,))
+            result = self.cursor.fetchone()
+            if not result:
+                print(f"Kaomoji '{kaomoji}' not found.")
+                return False
+            kaomoji_id = result[0]
+
+            # Delete existing tags
+            self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = ?", (kaomoji_id,))
+            self.conn.commit()
+
+            # Add new tags
+            if new_tags:
+                self.add_tags(kaomoji_id, new_tags)
+
+            print(f"Edited tags for kaomoji '{kaomoji}' to: {new_tags}")
+            return True
+
+        except sqlite3.Error as e:
+            print(f"Error editing tags: {e}")
+            return False
