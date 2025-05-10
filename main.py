@@ -1,6 +1,5 @@
-import sqlite3
-import sys
 import os
+import sys
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout,
                              QLineEdit, QPushButton, QListWidget,
                              QDialog, QFormLayout, QDialogButtonBox,
@@ -78,6 +77,8 @@ class KaomojiApp(QWidget):
         self.db = KaomojiDatabase()
         self.sort_by_date = True
         self.search_tags = []
+        self.show_favorites = False #NEW
+
         self.kaomoji_data = self.load_kaomoji_data()
         self.copied_kaomoji = []  # List to store copied kaomoji
 
@@ -94,6 +95,11 @@ class KaomojiApp(QWidget):
         self.search_tags_input = QLineEdit()
         self.search_tags_input.setPlaceholderText("Поиск по тегам (через запятую)")
         self.search_tags_input.returnPressed.connect(self.search_kaomoji_by_tags)
+
+        self.favorites_button = QPushButton("Только избранные") #NEW
+        self.favorites_button.setCheckable(True)
+        self.favorites_button.clicked.connect(self.toggle_favorites)
+
 
         # Copy Buffer Section
         self.copied_kaomoji_text = QTextEdit()
@@ -117,12 +123,13 @@ class KaomojiApp(QWidget):
         main_layout.addWidget(self.add_button)
         main_layout.addWidget(self.sort_checkbox)
         main_layout.addWidget(self.search_tags_input)
+        main_layout.addWidget(self.favorites_button) #NEW
         main_layout.addLayout(copy_buffer_section_layout)  # Add the copy buffer section
         self.setLayout(main_layout)
 
 
     def load_kaomoji_data(self):
-        return self.db.get_all_kaomoji(sort_by_date=self.sort_by_date, search_tags=self.search_tags)
+        return self.db.get_all_kaomoji(sort_by_date=self.sort_by_date, search_tags=self.search_tags, show_favorites = self.show_favorites) #NEW
 
     def toggle_sort(self, state):
         self.sort_by_date = state == Qt.Checked
@@ -231,6 +238,33 @@ class KaomojiApp(QWidget):
             del_button.clicked.connect(lambda checked, k=kaomoji: self.remove_kaomoji(k))
             layout.addWidget(del_button)
 
+            # Favorite Button
+            kaomoji_id = self.get_kaomoji_id(kaomoji)
+            is_favorite = self.db.is_favorite(kaomoji_id)
+            favorite_button = QPushButton("❤️" if is_favorite else "🤍")  # Heart emoji
+
+            favorite_button.setStyleSheet("""
+                QPushButton {
+                    color: black;
+                    font-weight: bold;
+                    border: none;
+                    min-width: 20px;
+                    max-width: 20px;
+                    min-height: 20px;
+                    max-height: 20px;
+                    margin-left: 5px;
+                }
+                QPushButton:hover {
+                    background-color: lightgray;
+                    color: red;
+                    font-size: 16px;
+                }
+            """)
+
+            favorite_button.clicked.connect(lambda checked, k_id=kaomoji_id: self.toggle_favorite(k_id, kaomoji))
+            layout.addWidget(favorite_button)
+
+
             kaomoji_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
             layout.setAlignment(Qt.AlignRight)
@@ -286,6 +320,29 @@ class KaomojiApp(QWidget):
     def search_kaomoji_by_tags(self):
         search_text = self.search_tags_input.text().strip()
         self.search_tags = [tag.strip() for tag in search_text.split(",") if tag.strip()]
+        self.kaomoji_data = self.load_kaomoji_data()
+        self.populate_kaomoji_list()
+
+    def get_kaomoji_id(self, kaomoji):
+        self.db.cursor.execute("SELECT id FROM kaomoji WHERE expression = ?", (kaomoji,))
+        result = self.db.cursor.fetchone()
+        if result:
+            return result[0]
+        return None
+
+    def toggle_favorite(self, kaomoji_id, kaomoji):
+        if self.db.is_favorite(kaomoji_id):
+            self.db.remove_from_favorites(kaomoji_id)
+            print(f"Removed kaomoji {kaomoji} from favorites")
+        else:
+            self.db.add_to_favorites(kaomoji_id)
+            print(f"Added kaomoji {kaomoji} to favorites")
+
+        self.kaomoji_data = self.load_kaomoji_data() # reload data after change
+        self.populate_kaomoji_list() # update the list
+
+    def toggle_favorites(self):
+        self.show_favorites = self.favorites_button.isChecked() # updates boolean state
         self.kaomoji_data = self.load_kaomoji_data()
         self.populate_kaomoji_list()
 

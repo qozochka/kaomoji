@@ -11,6 +11,7 @@ class KaomojiDatabase:
         self.upgrade_table()
         self.create_table()
         self.create_tags_table()
+        self.create_favorites_table() #NEW
 
     def connect(self):
         try:
@@ -68,6 +69,19 @@ class KaomojiDatabase:
             print("Table 'tags' created or already exists.")
         except sqlite3.Error as e:
             print(f"Error creating tags table: {e}")
+
+    def create_favorites_table(self): #NEW
+        try:
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS favorites (
+                    kaomoji_id INTEGER PRIMARY KEY,
+                    FOREIGN KEY (kaomoji_id) REFERENCES kaomoji(id)
+                )
+            """)
+            self.conn.commit()
+            print("Table 'favorites' created or already exists.")
+        except sqlite3.Error as e:
+            print(f"Error creating favorites table: {e}")
 
     def add_kaomoji(self, kaomoji, tags=None):
         try:
@@ -128,18 +142,27 @@ class KaomojiDatabase:
             print(f"Error removing kaomoji: {e}")
             return False
 
-    def get_all_kaomoji(self, sort_by_date=True, search_tags=None):
+    def get_all_kaomoji(self, sort_by_date=True, search_tags=None, show_favorites=False):
         try:
             sql = """
-                SELECT DISTINCT k.expression  -- Используем DISTINCT для устранения дубликатов
+                SELECT DISTINCT k.expression
                 FROM kaomoji k
                 LEFT JOIN tags t ON k.id = t.kaomoji_id
+                LEFT JOIN favorites f ON k.id = f.kaomoji_id
             """
             params = []
+            where_clauses = []
 
             if search_tags:
-                sql += " WHERE t.tag_name IN (" + ",".join(["?"] * len(search_tags)) + ")"
+                tag_placeholders = ",".join(["?"] * len(search_tags))
+                sql += f" WHERE t.tag_name IN ({tag_placeholders})"
                 params.extend(search_tags)
+
+            if show_favorites:
+                if search_tags:
+                    sql += " AND f.kaomoji_id IS NOT NULL"
+                else:
+                    sql += " WHERE f.kaomoji_id IS NOT NULL"
 
             sql += " GROUP BY k.expression"
 
@@ -195,4 +218,35 @@ class KaomojiDatabase:
 
         except sqlite3.Error as e:
             print(f"Error editing tags: {e}")
+            return False
+
+    def is_favorite(self, kaomoji_id): #NEW
+        try:
+            self.cursor.execute("SELECT kaomoji_id FROM favorites WHERE kaomoji_id = ?", (kaomoji_id,))
+            return self.cursor.fetchone() is not None
+        except sqlite3.Error as e:
+            print(f"Error checking if kaomoji is favorite: {e}")
+            return False
+
+    def add_to_favorites(self, kaomoji_id): #NEW
+        try:
+            self.cursor.execute("INSERT INTO favorites (kaomoji_id) VALUES (?)", (kaomoji_id,))
+            self.conn.commit()
+            print(f"Added kaomoji with ID {kaomoji_id} to favorites.")
+            return True
+        except sqlite3.IntegrityError:
+            print(f"Kaomoji with ID {kaomoji_id} is already in favorites.")
+            return False
+        except sqlite3.Error as e:
+            print(f"Error adding kaomoji to favorites: {e}")
+            return False
+
+    def remove_from_favorites(self, kaomoji_id): #NEW
+        try:
+            self.cursor.execute("DELETE FROM favorites WHERE kaomoji_id = ?", (kaomoji_id,))
+            self.conn.commit()
+            print(f"Removed kaomoji with ID {kaomoji_id} from favorites.")
+            return True
+        except sqlite3.Error as e:
+            print(f"Error removing kaomoji from favorites: {e}")
             return False
