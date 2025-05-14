@@ -61,8 +61,8 @@ class KaomojiDatabase:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     kaomoji_id INTEGER NOT NULL,
                     tag_name TEXT NOT NULL,
-                    FOREIGN KEY (kaomoji_id) REFERENCES kaomoji(id),
-                    UNIQUE (kaomoji_id, tag_name)  -- Prevent duplicate tags for a kaomoji
+                    FOREIGN KEY (kaomoji_id) REFERENCES kaomoji(id)
+                    -- Убрано ограничение UNIQUE
                 )
             """)
             self.conn.commit()
@@ -70,7 +70,7 @@ class KaomojiDatabase:
         except sqlite3.Error as e:
             print(f"Error creating tags table: {e}")
 
-    def create_favorites_table(self): #NEW
+    def create_favorites_table(self):
         try:
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS favorites (
@@ -142,7 +142,7 @@ class KaomojiDatabase:
             print(f"Error removing kaomoji: {e}")
             return False
 
-    def get_all_kaomoji(self, sort_by_date=True, search_tags=None, show_favorites=False):
+    def get_all_kaomoji(self, sort_by_date=True, search_tags=None, show_favorites=False, current_playlist=None):
         try:
             sql = """
                 SELECT DISTINCT k.expression
@@ -153,16 +153,24 @@ class KaomojiDatabase:
             params = []
             where_clauses = []
 
+            # Поиск по тегам
             if search_tags:
                 tag_placeholders = ",".join(["?"] * len(search_tags))
-                sql += f" WHERE t.tag_name IN ({tag_placeholders})"
+                where_clauses.append(f"t.tag_name IN ({tag_placeholders})")
                 params.extend(search_tags)
 
+            # Фильтрация по текущей подборке
+            if current_playlist:
+                where_clauses.append("t.tag_name = ?")
+                params.append(current_playlist)
+
+            # Показывать только избранные
             if show_favorites:
-                if search_tags:
-                    sql += " AND f.kaomoji_id IS NOT NULL"
-                else:
-                    sql += " WHERE f.kaomoji_id IS NOT NULL"
+                where_clauses.append("f.kaomoji_id IS NOT NULL")
+
+            # Объединение условий WHERE
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
 
             sql += " GROUP BY k.expression"
 

@@ -5,10 +5,11 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout,
                              QDialog, QFormLayout, QDialogButtonBox,
                              QMessageBox, QHBoxLayout, QListWidgetItem,
                              QLabel, QSizePolicy, QCheckBox, QLineEdit, QCompleter,
-                             QTextEdit)
+                             QTextEdit, QSplitter, QInputDialog)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QClipboard, QIcon
 from KaomojiDatabase import KaomojiDatabase
+import sqlite3
 
 class AddKaomojiDialog(QDialog):
     def __init__(self, parent=None):
@@ -69,18 +70,68 @@ class EditTagsDialog(QDialog):
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
         return tags
 
+class PlaylistManagementWidget(QWidget):
+    def __init__(self, parent=None, main_app=None):
+        super().__init__(parent)
+        self.playlists = ["Работа", "Личное"]  # Removed "Избранное"
+        self.playlist_list = QListWidget()
+        self.playlist_list.addItems(self.playlists)
+        self.create_button = QPushButton("Создать подборку")
+        self.delete_button = QPushButton("Удалить подборку")
+        self.main_app = main_app
+
+        self.create_button.clicked.connect(self.create_playlist)
+        self.delete_button.clicked.connect(self.delete_playlist)
+        self.playlist_list.itemClicked.connect(self.playlist_selected)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Подборки:"))
+        layout.addWidget(self.playlist_list)
+        layout.addWidget(self.create_button)
+        layout.addWidget(self.delete_button)
+        self.setLayout(layout)
+
+    def create_playlist(self):
+        playlist_name, ok = QInputDialog.getText(self, "Создать подборку", "Имя подборки:")
+        if ok and playlist_name:
+            if playlist_name not in self.playlists:
+                self.playlists.append(playlist_name)
+                self.playlist_list.addItem(playlist_name)
+            else:
+                QMessageBox.warning(self, "Ошибка", "Подборка с таким именем уже существует.")
+
+    def delete_playlist(self):
+        selected_item = self.playlist_list.currentItem()
+        if selected_item:
+            playlist_name = selected_item.text()
+            reply = QMessageBox.question(self, 'Удаление',
+                                        f"Удалить подборку '{playlist_name}'?",
+                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                if self.main_app:
+                  self.main_app.delete_playlist_kaomoji(playlist_name)
+                self.playlists.remove(playlist_name)
+                self.playlist_list.takeItem(self.playlist_list.row(selected_item))
+
+    def playlist_selected(self, item):
+        playlist_name = item.text()
+        print(f"Selected playlist: {playlist_name}")
+        if self.main_app:
+            self.main_app.load_kaomoji_for_playlist(playlist_name)
+
 class KaomojiApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Kaomoji Helper")
-        self.setGeometry(100, 100, 600, 550)  # Increased window height
+        self.setGeometry(100, 100, 800, 550)
         self.db = KaomojiDatabase()
         self.sort_by_date = True
         self.search_tags = []
-        self.show_favorites = False #NEW
+        self.show_favorites = False
+        self.current_playlist = None
 
-        self.kaomoji_data = self.load_kaomoji_data()
-        self.copied_kaomoji = []  # List to store copied kaomoji
+        self.kaomoji_data = []
+        self.copied_kaomoji = []
 
         self.results_list = QListWidget()
         self.populate_kaomoji_list()
@@ -94,16 +145,15 @@ class KaomojiApp(QWidget):
 
         self.search_tags_input = QLineEdit()
         self.search_tags_input.setPlaceholderText("Поиск по тегам (через запятую)")
-        self.search_tags_input.returnPressed.connect(self.search_kaomoji_by_tags)
+        self.search_tags_input.returnPressed.connect(self.perform_search)
 
-        self.favorites_button = QPushButton("Только избранные") #NEW
+        self.favorites_button = QPushButton("Только избранные")
         self.favorites_button.setCheckable(True)
         self.favorites_button.clicked.connect(self.toggle_favorites)
 
-
         # Copy Buffer Section
         self.copied_kaomoji_text = QTextEdit()
-        self.copied_kaomoji_text.setReadOnly(True)  # Make it read-only
+        self.copied_kaomoji_text.setReadOnly(True)
         self.copy_button = QPushButton("Копировать в буфер")
         self.copy_button.clicked.connect(self.copy_to_clipboard)
         self.clear_button = QPushButton("Очистить")
@@ -118,18 +168,65 @@ class KaomojiApp(QWidget):
         copy_buffer_section_layout.addWidget(self.copied_kaomoji_text)
         copy_buffer_section_layout.addLayout(copy_buffer_layout)
 
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(self.results_list)
-        main_layout.addWidget(self.add_button)
-        main_layout.addWidget(self.sort_checkbox)
-        main_layout.addWidget(self.search_tags_input)
-        main_layout.addWidget(self.favorites_button) #NEW
-        main_layout.addLayout(copy_buffer_section_layout)  # Add the copy buffer section
+        #Playlist Management
+        self.playlist_management = PlaylistManagementWidget(main_app=self)
+
+        # Main Layout with splitter
+        main_layout = QHBoxLayout()
+
+        # Left side (Kaomoji List and controls)
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(self.results_list)
+        left_layout.addWidget(self.add_button)
+        left_layout.addWidget(self.sort_checkbox)
+        left_layout.addWidget(self.search_tags_input)
+        left_layout.addWidget(self.favorites_button)
+        left_layout.addLayout(copy_buffer_section_layout)
+
+        # Splitter to separate Kaomoji list from playlist management
+        splitter = QSplitter(Qt.Horizontal)
+
+        left_widget = QWidget()
+        left_widget.setLayout(left_layout)
+
+        splitter.addWidget(left_widget)
+        splitter.addWidget(self.playlist_management)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+
+        main_layout.addWidget(splitter)
         self.setLayout(main_layout)
 
-
     def load_kaomoji_data(self):
-        return self.db.get_all_kaomoji(sort_by_date=self.sort_by_date, search_tags=self.search_tags, show_favorites = self.show_favorites) #NEW
+        search_tags = self.search_tags
+        show_favorites = self.show_favorites
+
+        print(
+            f"Loading kaomoji data with search_tags: {search_tags}, show_favorites: {show_favorites}, current_playlist: {self.current_playlist}")
+
+        kaomoji_list = self.db.get_all_kaomoji(sort_by_date=self.sort_by_date, search_tags=search_tags,
+                                               show_favorites=show_favorites, current_playlist=self.current_playlist)
+
+        print(f"Found {len(kaomoji_list)} kaomoji.")
+        return kaomoji_list
+
+    def load_kaomoji_for_playlist(self, playlist_name):
+        self.current_playlist = playlist_name
+        print(f"Loading kaomoji for playlist: {playlist_name}")
+        # self.search_tags = [] #Clear search tags on selection - убираем очистку search_tags
+        # теперь поиск тегов будет осуществляться в текущей подборке, если теги заданы
+        self.kaomoji_data = self.load_kaomoji_data()
+        self.populate_kaomoji_list()
+
+    def perform_search(self):
+        search_text = self.search_tags_input.text().strip()
+        self.search_tags = [tag.strip() for tag in search_text.split(",") if tag.strip()]
+        print(f"Performing search with tags: {self.search_tags}")
+        # self.current_playlist = None #Раскомментировать для поиска по всем, а не в текущей подборке
+        self.kaomoji_data = self.load_kaomoji_data()
+        self.populate_kaomoji_list()
+        print(f"Search completed, kaomoji_data has {len(self.kaomoji_data)} items.")
 
     def toggle_sort(self, state):
         self.sort_by_date = state == Qt.Checked
@@ -143,20 +240,26 @@ class KaomojiApp(QWidget):
         if result == QDialog.Accepted:
             kaomoji, tags = dialog.get_kaomoji()
             if kaomoji:
-                if kaomoji in self.kaomoji_data:
-                    QMessageBox.warning(self, "Ошибка", "Такой каомодзи уже существует!")
-                    return
+                # if self.current_playlist:  # Check for duplicates only in a playlist
+                #     kaomoji_id = self.get_kaomoji_id(kaomoji)
+                #     if kaomoji_id and self.db.get_tags_for_kaomoji(kaomoji) and self.current_playlist in self.db.get_tags_for_kaomoji(kaomoji):
+                #         QMessageBox.warning(self, "Ошибка", f"Каомодзи '{kaomoji}' уже существует в подборке '{self.current_playlist}'!")
+                #         return
 
                 if self.db.add_kaomoji(kaomoji, tags):
+                    kaomoji_id = self.get_kaomoji_id(kaomoji)
+                    if self.current_playlist:
+                        self.db.add_tag(kaomoji_id, self.current_playlist)
                     self.kaomoji_data = self.load_kaomoji_data()
                     self.populate_kaomoji_list()
-                    print(f"Added kaomoji: {kaomoji} with tags: {tags}")
+                    print(f"Added kaomoji: {kaomoji} with tags: {tags} to playlist: {self.current_playlist}")
                 else:
                     QMessageBox.warning(self, "Ошибка", "Не удалось добавить каомодзи.")
             else:
                 QMessageBox.warning(self, "Ошибка", "Каомодзи не может быть пустым!")
 
     def populate_kaomoji_list(self):
+        print("Populating kaomoji list...")
         self.results_list.clear()
         for kaomoji in self.kaomoji_data:
             item = QListWidgetItem()
@@ -261,33 +364,29 @@ class KaomojiApp(QWidget):
                 }
             """)
 
-            favorite_button.clicked.connect(lambda checked, k_id=kaomoji_id: self.toggle_favorite(k_id, kaomoji))
+            favorite_button.clicked.connect(lambda checked, k_id=kaomoji_id, k=kaomoji: self.toggle_favorite(k_id, k))
             layout.addWidget(favorite_button)
 
-
             kaomoji_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
             layout.setAlignment(Qt.AlignRight)
-
             widget.setLayout(layout)
-
             item.setSizeHint(widget.sizeHint())
 
             self.results_list.addItem(item)
             self.results_list.setItemWidget(item, widget)
+        print("Kaomoji list populated.")
 
     def copy_kaomoji(self, kaomoji):
         self.copied_kaomoji.append(kaomoji)
         self.update_copied_kaomoji_text()
         print(f"Copied kaomoji: {kaomoji}")
 
-
     def update_copied_kaomoji_text(self):
-        self.copied_kaomoji_text.setPlainText(" ".join(self.copied_kaomoji))  # Space between entries
+        self.copied_kaomoji_text.setPlainText(" ".join(self.copied_kaomoji))
 
     def copy_to_clipboard(self):
         clipboard = QApplication.clipboard()
-        clipboard.setText(" ".join(self.copied_kaomoji))  # Space between entries
+        clipboard.setText(" ".join(self.copied_kaomoji))
         print("Copied to clipboard")
 
     def clear_copied_kaomoji(self):
@@ -320,8 +419,13 @@ class KaomojiApp(QWidget):
     def search_kaomoji_by_tags(self):
         search_text = self.search_tags_input.text().strip()
         self.search_tags = [tag.strip() for tag in search_text.split(",") if tag.strip()]
+
+        print(f"Performing search with tags: {self.search_tags}, current playlist: {self.current_playlist}")
+
         self.kaomoji_data = self.load_kaomoji_data()
         self.populate_kaomoji_list()
+
+        print(f"Search completed, kaomoji_data has {len(self.kaomoji_data)} items.")
 
     def get_kaomoji_id(self, kaomoji):
         self.db.cursor.execute("SELECT id FROM kaomoji WHERE expression = ?", (kaomoji,))
@@ -338,13 +442,24 @@ class KaomojiApp(QWidget):
             self.db.add_to_favorites(kaomoji_id)
             print(f"Added kaomoji {kaomoji} to favorites")
 
-        self.kaomoji_data = self.load_kaomoji_data() # reload data after change
-        self.populate_kaomoji_list() # update the list
-
-    def toggle_favorites(self):
-        self.show_favorites = self.favorites_button.isChecked() # updates boolean state
         self.kaomoji_data = self.load_kaomoji_data()
         self.populate_kaomoji_list()
+
+    def toggle_favorites(self):
+        self.show_favorites = not self.show_favorites
+        self.kaomoji_data = self.load_kaomoji_data()
+        self.populate_kaomoji_list()
+
+    def delete_playlist_kaomoji(self, playlist_name):
+      try:
+        self.db.cursor.execute("DELETE FROM tags WHERE tag_name = ?", (playlist_name,))
+        self.db.conn.commit()
+        print(f"Removed all tags for playlist: {playlist_name}")
+      except sqlite3.Error as e:
+        print(f"Error removing tags: {e}")
+
+      self.kaomoji_data = self.load_kaomoji_data()
+      self.populate_kaomoji_list()
 
     def closeEvent(self, event):
         self.db.close()
