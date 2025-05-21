@@ -1,7 +1,6 @@
 import sqlite3
 import sys
 
-
 class KaomojiDatabase:
     def __init__(self, db_name="kaomoji.db"):
         self.db_name = db_name
@@ -11,7 +10,7 @@ class KaomojiDatabase:
         self.upgrade_table()
         self.create_table()
         self.create_tags_table()
-        self.create_favorites_table() #NEW
+        self.create_favorites_table()
 
     def connect(self):
         try:
@@ -28,6 +27,7 @@ class KaomojiDatabase:
                 CREATE TABLE IF NOT EXISTS kaomoji (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     expression TEXT UNIQUE NOT NULL,
+                    playlist_name TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -53,6 +53,17 @@ class KaomojiDatabase:
                 print(f"Error upgrading table: {e}")
         except sqlite3.Error as e:
             print(f"Error upgrading table: {e}")
+        try:
+            self.cursor.execute("ALTER TABLE kaomoji ADD COLUMN playlist_name TEXT")
+            self.conn.commit()
+            print("Successfully added 'playlist_name' column to table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name: playlist_name" in str(e):
+                print("Column 'playlist_name' already exists. Skipping.")
+            else:
+                print(f"Error upgrading table: {e}")
+        except sqlite3.Error as e:
+            print(f"Error upgrading table: {e}")
 
     def create_tags_table(self):
         try:
@@ -62,7 +73,6 @@ class KaomojiDatabase:
                     kaomoji_id INTEGER NOT NULL,
                     tag_name TEXT NOT NULL,
                     FOREIGN KEY (kaomoji_id) REFERENCES kaomoji(id)
-                    -- Убрано ограничение UNIQUE
                 )
             """)
             self.conn.commit()
@@ -83,12 +93,12 @@ class KaomojiDatabase:
         except sqlite3.Error as e:
             print(f"Error creating favorites table: {e}")
 
-    def add_kaomoji(self, kaomoji, tags=None):
+    def add_kaomoji(self, kaomoji, tags=None, playlist_name=None):
         try:
-            self.cursor.execute("INSERT INTO kaomoji (expression) VALUES (?)", (kaomoji,))
+            self.cursor.execute("INSERT INTO kaomoji (expression, playlist_name) VALUES (?, ?)", (kaomoji, playlist_name))
             self.conn.commit()
             kaomoji_id = self.cursor.lastrowid
-            print(f"Added kaomoji: {kaomoji} with ID: {kaomoji_id}")
+            print(f"Added kaomoji: {kaomoji} with ID: {kaomoji_id}, playlist: {playlist_name}")
 
             if tags:
                 self.add_tags(kaomoji_id, tags)
@@ -121,22 +131,23 @@ class KaomojiDatabase:
             print(f"Error adding tags: {e}")
             return False
 
-    def add_tag(self, kaomoji_id, tag_name):
-        return self.add_tags(kaomoji_id, [tag_name])
-
     def remove_kaomoji(self, kaomoji):
         try:
-            self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = (SELECT id FROM kaomoji WHERE expression = ?)",
-                                (kaomoji,))
-            self.conn.commit()
-
-            self.cursor.execute("DELETE FROM kaomoji WHERE expression = ?", (kaomoji,))
-            if self.cursor.rowcount > 0:
+            kaomoji_id = self.get_kaomoji_id(kaomoji)
+            if kaomoji_id:
+                self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = ?", (kaomoji_id,))
                 self.conn.commit()
-                print(f"Removed kaomoji: {kaomoji}")
-                return True
+
+                self.cursor.execute("DELETE FROM kaomoji WHERE expression = ?", (kaomoji,))
+                if self.cursor.rowcount > 0:
+                    self.conn.commit()
+                    print(f"Removed kaomoji: {kaomoji}")
+                    return True
+                else:
+                    print(f"Kaomoji '{kaomoji}' not found in the database.")
+                    return False
             else:
-                print(f"Kaomoji '{kaomoji}' not found in the database.")
+                print(f"Kaomoji ID not found for '{kaomoji}'.")
                 return False
         except sqlite3.Error as e:
             print(f"Error removing kaomoji: {e}")
@@ -153,17 +164,16 @@ class KaomojiDatabase:
             params = []
             where_clauses = []
 
+            # Фильтрация по текущей подборке
+            if current_playlist:
+                where_clauses.append("k.playlist_name = ?")
+                params.append(current_playlist)
+
             # Поиск по тегам
             if search_tags:
                 tag_placeholders = ",".join(["?"] * len(search_tags))
                 where_clauses.append(f"t.tag_name IN ({tag_placeholders})")
                 params.extend(search_tags)
-
-            # Фильтрация по текущей подборке
-            if current_playlist:
-                where_clauses.append("t.tag_name = ?")
-                params.append(current_playlist)
-
             # Показывать только избранные
             if show_favorites:
                 where_clauses.append("f.kaomoji_id IS NOT NULL")
@@ -186,49 +196,45 @@ class KaomojiDatabase:
 
     def get_tags_for_kaomoji(self, kaomoji):
         try:
-            self.cursor.execute("""
-                SELECT t.tag_name
-                FROM tags t
-                JOIN kaomoji k ON t.kaomoji_id = k.id
-                WHERE k.expression = ?
-            """, (kaomoji,))
-            tags = [row[0] for row in self.cursor.fetchall()]
-            return tags
+            kaomoji_id = self.get_kaomoji_id(kaomoji)
+            if kaomoji_id:
+                self.cursor.execute("""
+                    SELECT t.tag_name
+                    FROM tags t
+                    WHERE t.kaomoji_id = ?
+                """, (kaomoji_id,))
+                tags = [row[0] for row in self.cursor.fetchall()]
+                return tags
+            else:
+                print(f"Kaomoji ID not found for '{kaomoji}'.")
+                return []
         except sqlite3.Error as e:
             print(f"Error getting tags for kaomoji: {e}")
             return []
 
-    def close(self):
-        if self.conn:
-            self.conn.close()
-            print("Database connection closed.")
-
     def edit_tags(self, kaomoji, new_tags):
         try:
-            # Get kaomoji ID
-            self.cursor.execute("SELECT id FROM kaomoji WHERE expression = ?", (kaomoji,))
-            result = self.cursor.fetchone()
-            if not result:
-                print(f"Kaomoji '{kaomoji}' not found.")
+            kaomoji_id = self.get_kaomoji_id(kaomoji)
+            if kaomoji_id:
+                # Delete existing tags
+                self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = ?", (kaomoji_id,))
+                self.conn.commit()
+
+                # Add new tags
+                if new_tags:
+                    self.add_tags(kaomoji_id, new_tags)
+
+                print(f"Edited tags for kaomoji '{kaomoji}' to: {new_tags}")
+                return True
+            else:
+                print(f"Kaomoji ID not found for '{kaomoji}'.")
                 return False
-            kaomoji_id = result[0]
-
-            # Delete existing tags
-            self.cursor.execute("DELETE FROM tags WHERE kaomoji_id = ?", (kaomoji_id,))
-            self.conn.commit()
-
-            # Add new tags
-            if new_tags:
-                self.add_tags(kaomoji_id, new_tags)
-
-            print(f"Edited tags for kaomoji '{kaomoji}' to: {new_tags}")
-            return True
 
         except sqlite3.Error as e:
             print(f"Error editing tags: {e}")
             return False
 
-    def is_favorite(self, kaomoji_id): #NEW
+    def is_favorite(self, kaomoji_id):
         try:
             self.cursor.execute("SELECT kaomoji_id FROM favorites WHERE kaomoji_id = ?", (kaomoji_id,))
             return self.cursor.fetchone() is not None
@@ -236,7 +242,7 @@ class KaomojiDatabase:
             print(f"Error checking if kaomoji is favorite: {e}")
             return False
 
-    def add_to_favorites(self, kaomoji_id): #NEW
+    def add_to_favorites(self, kaomoji_id):
         try:
             self.cursor.execute("INSERT INTO favorites (kaomoji_id) VALUES (?)", (kaomoji_id,))
             self.conn.commit()
@@ -249,7 +255,7 @@ class KaomojiDatabase:
             print(f"Error adding kaomoji to favorites: {e}")
             return False
 
-    def remove_from_favorites(self, kaomoji_id): #NEW
+    def remove_from_favorites(self, kaomoji_id):
         try:
             self.cursor.execute("DELETE FROM favorites WHERE kaomoji_id = ?", (kaomoji_id,))
             self.conn.commit()
@@ -258,3 +264,31 @@ class KaomojiDatabase:
         except sqlite3.Error as e:
             print(f"Error removing kaomoji from favorites: {e}")
             return False
+
+    def get_kaomoji_id(self, kaomoji):
+        try:
+            self.cursor.execute("SELECT id FROM kaomoji WHERE expression = ?", (kaomoji,))
+            result = self.cursor.fetchone()
+            if result:
+                return result[0]
+            else:
+                return None
+        except sqlite3.Error as e:
+            print(f"Error getting kaomoji ID: {e}")
+            return None
+    def get_playlist_for_kaomoji(self, kaomoji):
+        try:
+            self.cursor.execute("SELECT playlist_name FROM kaomoji WHERE expression = ?", (kaomoji,))
+            result = self.cursor.fetchone()
+            if result:
+                return result[0]
+            else:
+                return None
+        except sqlite3.Error as e:
+            print(f"Error getting playlist for kaomoji: {e}")
+            return None
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+            print("Database connection closed.")
