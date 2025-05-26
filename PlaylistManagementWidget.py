@@ -1,10 +1,11 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QListWidget, QPushButton,
                              QInputDialog, QMessageBox)
 
+
 class PlaylistManagementWidget(QWidget):
     def __init__(self, parent=None, main_app=None):
         super().__init__(parent)
-        self.playlists = ["Работа", "Личное"]  # Removed "Избранное"
+        self.playlists = ["моя подборка 1", "моя подборка 2"]
         self.playlist_list = QListWidget()
         self.playlist_list.addItems(self.playlists)
         self.create_button = QPushButton("Создать подборку")

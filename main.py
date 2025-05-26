@@ -78,8 +78,9 @@ class EditTagsDialog(QDialog):
 class PlaylistManagementWidget(QWidget):
     def __init__(self, parent=None, main_app=None):
         super().__init__(parent)
-        self.playlists = ["Работа", "Личное"]
+        self.playlists = ["моя подборка 1", "моя подборка 2"]
         self.playlist_list = QListWidget()
+        self.playlist_list.addItem("Все")
         self.playlist_list.addItems(self.playlists)
         self.create_button = QPushButton("Создать подборку")
         self.delete_button = QPushButton("Удалить подборку")
@@ -99,7 +100,7 @@ class PlaylistManagementWidget(QWidget):
     def create_playlist(self):
         playlist_name, ok = QInputDialog.getText(self, "Создать подборку", "Имя подборки:")
         if ok and playlist_name:
-            if playlist_name not in self.playlists:
+            if playlist_name not in self.playlists and playlist_name != "Все":
                 self.playlists.append(playlist_name)
                 self.playlist_list.addItem(playlist_name)
             else:
@@ -107,7 +108,7 @@ class PlaylistManagementWidget(QWidget):
 
     def delete_playlist(self):
         selected_item = self.playlist_list.currentItem()
-        if selected_item:
+        if selected_item and selected_item.text() != "Все":
             playlist_name = selected_item.text()
             reply = QMessageBox.question(self, 'Удаление',
                                         f"Удалить подборку '{playlist_name}'?",
@@ -115,12 +116,20 @@ class PlaylistManagementWidget(QWidget):
             if reply == QMessageBox.Yes:
                 self.playlists.remove(playlist_name)
                 self.playlist_list.takeItem(self.playlist_list.row(selected_item))
+                if self.main_app:
+                    self.main_app.load_kaomoji_for_playlist(None)
+        elif selected_item and selected_item.text() == "Все":
+            QMessageBox.warning(self, "Ошибка", "Подборку 'Все' нельзя удалить.")
+
 
     def playlist_selected(self, item):
         playlist_name = item.text()
         print(f"Selected playlist: {playlist_name}")
         if self.main_app:
-            self.main_app.load_kaomoji_for_playlist(playlist_name)
+            if playlist_name == "Все":
+                self.main_app.load_kaomoji_for_playlist(None)  # Pass None for "Все"
+            else:
+                self.main_app.load_kaomoji_for_playlist(playlist_name)
 
 class KaomojiApp(QWidget):
     def __init__(self):
@@ -445,5 +454,10 @@ class KaomojiApp(QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = KaomojiApp()
+    # Prepopulate with some playlists if empty, before showing
+    if not ex.playlist_management.playlists:
+        ex.playlist_management.playlists = ["моя подборка 1", "моя подборка 2"]
+        ex.playlist_management.playlist_list.addItems(ex.playlist_management.playlists) # Update UI List
+
     ex.show()
     sys.exit(app.exec_())

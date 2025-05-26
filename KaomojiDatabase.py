@@ -165,7 +165,7 @@ class KaomojiDatabase:
             where_clauses = []
 
             # Фильтрация по текущей подборке
-            if current_playlist:
+            if current_playlist is not None:
                 where_clauses.append("k.playlist_name = ?")
                 params.append(current_playlist)
 
@@ -276,6 +276,7 @@ class KaomojiDatabase:
         except sqlite3.Error as e:
             print(f"Error getting kaomoji ID: {e}")
             return None
+
     def get_playlist_for_kaomoji(self, kaomoji):
         try:
             self.cursor.execute("SELECT playlist_name FROM kaomoji WHERE expression = ?", (kaomoji,))
